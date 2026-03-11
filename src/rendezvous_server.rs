@@ -632,10 +632,15 @@ impl RendezvousServer {
             socket_addr: AddrMangle::encode(addr).into(),
             pk: self.get_pk(&phs.version, phs.id).await,
             relay_server: phs.relay_server.clone(),
+            upnp_port: phs.upnp_port,
+            socket_addr_v6: phs.socket_addr_v6.clone(),
             ..Default::default()
         };
         if let Ok(t) = phs.nat_type.enum_value() {
             p.set_nat_type(t);
+        }
+        if socket.is_some() {
+            p.is_udp = true;
         }
         msg_out.set_punch_hole_response(p);
         if let Some(socket) = socket {
@@ -666,6 +671,7 @@ impl RendezvousServer {
             socket_addr: la.local_addr.clone(),
             pk: self.get_pk(&la.version, la.id).await,
             relay_server: la.relay_server,
+            socket_addr_v6: la.socket_addr_v6.clone(),
             ..Default::default()
         };
         p.set_is_local(true);
@@ -695,6 +701,9 @@ impl RendezvousServer {
                 ..Default::default()
             });
             return Ok((msg_out, None));
+        }
+        if ph.force_relay {
+            ph.nat_type = NatType::SYMMETRIC.into();
         }
         let id = ph.id;
         // punch hole request from A, relay to B,
@@ -762,6 +771,8 @@ impl RendezvousServer {
                 msg_out.set_fetch_local_addr(FetchLocalAddr {
                     socket_addr,
                     relay_server,
+                    socket_addr_v6: ph.socket_addr_v6.clone(),
+                    control_permissions: Default::default(),
                     ..Default::default()
                 });
             } else {
@@ -775,6 +786,11 @@ impl RendezvousServer {
                     socket_addr,
                     nat_type: ph.nat_type,
                     relay_server,
+                    udp_port: ph.udp_port,
+                    force_relay: ph.force_relay,
+                    upnp_port: ph.upnp_port,
+                    socket_addr_v6: ph.socket_addr_v6.clone(),
+                    control_permissions: Default::default(),
                     ..Default::default()
                 });
             }

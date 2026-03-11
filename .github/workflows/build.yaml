@@ -46,7 +46,7 @@ jobs:
     steps:
       
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -59,6 +59,11 @@ jobs:
           components: rustfmt
           profile: minimal
           target: ${{ matrix.job.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-${{ matrix.job.target }}
 
       - name: Build
         uses: actions-rs/cargo@v1
@@ -87,7 +92,7 @@ jobs:
     steps:
       
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -100,6 +105,11 @@ jobs:
           components: rustfmt
           profile: minimal
           target: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-x86_64
 
       - name: Build
         uses: actions-rs/cargo@v1
@@ -117,9 +127,20 @@ jobs:
           scoop install nsis
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 16
+
+      - name: Configure npm cache
+        run: npm config set cache "${{ github.workspace }}\\.npm"
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\\.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('ui/html/package.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
 
       - name: Sign exe files
         uses: GermanBluefox/code-sign-action@v7
@@ -175,6 +196,9 @@ jobs:
   release:
 
     name: Github release
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
     needs: 
       - build
       - build-win
@@ -208,7 +232,7 @@ jobs:
           zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
 
       - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
@@ -217,6 +241,7 @@ jobs:
   docker:
 
     name: Docker push - ${{ matrix.job.name }}
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
     strategy:
@@ -231,7 +256,7 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
         
@@ -245,21 +270,21 @@ jobs:
         run: chmod -v a+x docker/rootfs/usr/bin/*
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: rustdesk
@@ -267,7 +292,7 @@ jobs:
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE }}
 
@@ -301,6 +326,7 @@ jobs:
   docker-manifest:
 
     name: Docker manifest
+    if: startsWith(github.ref, 'refs/tags/')
     needs: docker
     runs-on: ubuntu-22.04
 
@@ -308,7 +334,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
@@ -323,7 +349,7 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: rustdesk
@@ -386,6 +412,7 @@ jobs:
   docker-classic:
 
     name: Docker push - ${{ matrix.job.name }}
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
     strategy:
@@ -399,7 +426,7 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
         
@@ -413,21 +440,21 @@ jobs:
         run: chmod -v a+x docker-classic/*
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: rustdesk
@@ -435,7 +462,7 @@ jobs:
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE_CLASSIC }}
 
@@ -467,6 +494,7 @@ jobs:
   docker-manifest-classic:
 
     name: Docker manifest
+    if: startsWith(github.ref, 'refs/tags/')
     needs: docker
     runs-on: ubuntu-22.04
 
@@ -474,7 +502,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
@@ -489,7 +517,7 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: rustdesk
@@ -551,6 +579,9 @@ jobs:
   deb-package:
 
     name: debian package - ${{ matrix.job.name }}
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
     needs: build
     runs-on: ubuntu-22.04
     strategy:
@@ -565,12 +596,12 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Create packaging env
         run: |
@@ -593,7 +624,7 @@ jobs:
           debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
