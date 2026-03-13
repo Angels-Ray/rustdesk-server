@@ -643,9 +643,21 @@ impl RendezvousServer {
             p.is_udp = true;
         }
         msg_out.set_punch_hole_response(p);
+        // Prefer TCP control channel if available. UDP fallback only when TCP sink is absent.
+        let mut sink = self.tcp_punch.lock().await.remove(&try_into_v4(addr_a));
+        if sink.is_some() {
+            log::debug!("PunchHoleResponse via TCP control channel to {}", addr_a);
+            Self::send_to_sink(&mut sink, msg_out).await;
+            return Ok(());
+        }
         if let Some(socket) = socket {
+            log::debug!("PunchHoleResponse via UDP fallback to {}", addr_a);
             socket.send(&msg_out, addr_a).await?;
         } else {
+            log::warn!(
+                "PunchHoleResponse dropped: no TCP sink and no UDP socket for {}",
+                addr_a
+            );
             self.send_to_tcp(msg_out, addr_a).await;
         }
         Ok(())
