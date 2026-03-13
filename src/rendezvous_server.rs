@@ -473,8 +473,12 @@ impl RendezvousServer {
                         socket.send(&msg_out, addr).await?;
                     }
                 }
-                _ => {}
+                _ => {
+                    log::debug!("UDP received non-handled message from {}", addr);
+                }
             }
+        } else {
+            log::debug!("UDP parse failed from {}", addr);
         }
         Ok(())
     }
@@ -539,6 +543,11 @@ impl RendezvousServer {
                     allow_err!(self.handle_local_addr(la, addr, None).await);
                 }
                 Some(rendezvous_message::Union::TestNatRequest(tar)) => {
+                    log::debug!(
+                        "TestNatRequest via control channel from {}, serial={}",
+                        addr,
+                        tar.serial
+                    );
                     let mut msg_out = RendezvousMessage::new();
                     let mut res = TestNatResponse {
                         port: addr.port() as _,
@@ -551,6 +560,11 @@ impl RendezvousServer {
                         res.cu = MessageField::from_option(Some(cu));
                     }
                     msg_out.set_test_nat_response(res);
+                    log::debug!(
+                        "TestNatResponse via control channel to {}: port={}",
+                        addr,
+                        addr.port()
+                    );
                     Self::send_to_sink(sink, msg_out).await;
                 }
                 Some(rendezvous_message::Union::RegisterPk(_)) => {
@@ -1143,25 +1157,50 @@ impl RendezvousServer {
             });
             return;
         }
+        log::debug!("Tcp connection (NAT test port) from {}", addr);
         let stream = FramedStream::from(stream, addr);
         tokio::spawn(async move {
             let mut stream = stream;
-            if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
-                if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-                    match msg_in.union {
-                        Some(rendezvous_message::Union::TestNatRequest(_)) => {
-                            let mut msg_out = RendezvousMessage::new();
-                            msg_out.set_test_nat_response(TestNatResponse {
-                                port: addr.port() as _,
-                                ..Default::default()
-                            });
-                            stream.send(&msg_out).await.ok();
+            match stream.next_timeout(30_000).await {
+                Some(Ok(bytes)) => {
+                    match RendezvousMessage::parse_from_bytes(&bytes) {
+                        Ok(msg_in) => {
+                            match msg_in.union {
+                                Some(rendezvous_message::Union::TestNatRequest(_)) => {
+                                    log::debug!(
+                                        "TestNatRequest via NAT test port from {}",
+                                        addr
+                                    );
+                                    let mut msg_out = RendezvousMessage::new();
+                                    msg_out.set_test_nat_response(TestNatResponse {
+                                        port: addr.port() as _,
+                                        ..Default::default()
+                                    });
+                                    log::debug!(
+                                        "TestNatResponse via NAT test port to {}: port={}",
+                                        addr,
+                                        addr.port()
+                                    );
+                                    stream.send(&msg_out).await.ok();
+                                }
+                                Some(rendezvous_message::Union::OnlineRequest(or)) => {
+                                    allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
+                                }
+                                _ => {
+                                    log::debug!("NAT test port received non-test message from {}", addr);
+                                }
+                            }
                         }
-                        Some(rendezvous_message::Union::OnlineRequest(or)) => {
-                            allow_err!(rs.handle_online_request(&mut stream, or.peers).await);
+                        Err(e) => {
+                            log::debug!("NAT test port parse failed from {}: {}", addr, e);
                         }
-                        _ => {}
                     }
+                }
+                Some(Err(e)) => {
+                    log::debug!("NAT test port read failed from {}: {}", addr, e);
+                }
+                None => {
+                    log::debug!("NAT test port read timeout from {}", addr);
                 }
             }
         });
@@ -1205,9 +1244,25 @@ impl RendezvousServer {
             let ws_stream = tokio_tungstenite::accept_hdr_async(stream, callback).await?;
             let (a, mut b) = ws_stream.split();
             sink = Some(Sink::Ws(a));
-            while let Ok(Some(Ok(msg))) = timeout(30_000, b.next()).await {
-                if let tungstenite::Message::Binary(bytes) = msg {
-                    if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+            loop {
+                match timeout(30_000, b.next()).await {
+                    Ok(Some(Ok(msg))) => {
+                        if let tungstenite::Message::Binary(bytes) = msg {
+                            if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(Some(Err(e))) => {
+                        log::debug!("Tcp ws read failed from {}: {}", addr, e);
+                        break;
+                    }
+                    Ok(None) => {
+                        log::debug!("Tcp ws read closed from {}", addr);
+                        break;
+                    }
+                    Err(e) => {
+                        log::debug!("Tcp ws read timeout from {}: {}", addr, e);
                         break;
                     }
                 }
@@ -1215,9 +1270,25 @@ impl RendezvousServer {
         } else {
             let (a, mut b) = Framed::new(stream, BytesCodec::new()).split();
             sink = Some(Sink::TcpStream(a));
-            while let Ok(Some(Ok(bytes))) = timeout(30_000, b.next()).await {
-                if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
-                    break;
+            loop {
+                match timeout(30_000, b.next()).await {
+                    Ok(Some(Ok(bytes))) => {
+                        if !self.handle_tcp(&bytes, &mut sink, addr, key, ws).await {
+                            break;
+                        }
+                    }
+                    Ok(Some(Err(e))) => {
+                        log::debug!("Tcp read failed from {}: {}", addr, e);
+                        break;
+                    }
+                    Ok(None) => {
+                        log::debug!("Tcp read closed from {}", addr);
+                        break;
+                    }
+                    Err(e) => {
+                        log::debug!("Tcp read timeout from {}: {}", addr, e);
+                        break;
+                    }
                 }
             }
         }
